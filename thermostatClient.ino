@@ -1,3 +1,5 @@
+#include <RTCZero.h>
+#include <ArduinoLowPower.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <WiFiNINA.h>
@@ -5,16 +7,16 @@
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
+
 #include "secrets.h"
 
 #define DHTPIN 2  
 #define DHTTYPE DHT22
 #define OLED_RESET 4
 
-// This will help if your board is not of the same type as mine
-#if (SSD1306_LCDHEIGHT != 64)
-#error("Height incorrect, please fix Adafruit_SSD1306.h!");
-#endif
+// Wake-Up Interrupt pin
+const int manualPin = 5;
+bool displayOn = true;
 
 DHT_Unified dht(DHTPIN, DHTTYPE);
 Adafruit_SSD1306 display(OLED_RESET);
@@ -25,88 +27,81 @@ String postPath = "/data";
 String temp;
 String humid;
 int port = 443;
-unsigned long timeStamp = 0;
-int period = 3600000; // every 1 hour
+int period = 30000; // every 30s
 
 char ssid[] = SECRET_SSID;
 char pass[] = SECRET_PASS;
 String myMacAddress = SECRET_MAC;
 String session = SECRET_SESH;
-int statusCode;
+String statusCode = "none";
 
 WiFiSSLClient wifi;
 HttpClient client = HttpClient(wifi, serverAddress, port);
 
 void setup() {
-  // put your setup code here, to run once:
-  // Serial.begin(9600);
+     Serial.begin(9600);
+  // Start Display and DHT sensor
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C); // Initialize display
   display.clearDisplay(); // Clear display before each start
   delay(100);
-  
   dht.begin();
+
+  // Initiated First Scree
   int connectionAttempt = 1;
   String message = "Connecting to " + String(ssid) + "; Attempt " + String(connectionAttempt);
   setStatusMessage(message,statusCode);
-  
-  while ( WiFi.status() != WL_CONNECTED) {
-    // Serial.print("Attempting to connect to Network named: ");
-    // Serial.println(ssid);                   // print the network name (SSID);
 
-    // Connect to WPA/WPA2 network:
+  // Wait until connected
+  while ( WiFi.status() != WL_CONNECTED) {
     WiFi.begin(ssid, pass);
     connectionAttempt++;
     message = "Connecting to " + String(ssid) + "; Attempt " + String(connectionAttempt);
     setStatusMessage(message,statusCode);
   }
   setStatusMessage("Connected",statusCode);
-  // Serial.print("SSID: ");
-  // Serial.println(WiFi.SSID());
-
-  // print your WiFi shield's IP address:
-  IPAddress ip = WiFi.localIP();
-  // Serial.print("IP Address: ");
-  // Serial.println(ip);
+  delay(3000);
+  display.fillRect(0, 0, 128, 64, BLACK);
+  display.display();
+  LowPower.attachInterruptWakeup(manualPin, turnOnDisplay, CHANGE); 
 }
 
 void loop() {
-  // put your main code here, to run repeatedly
-  
    collectReadings();
-   displayReadings();
-   checkForConnection();
+   if (displayOn) {
+     displayReadings();
+   }
+   establishConnection();
    sendReadings();
-   updateConnectionStatus();
-   delay(1000);
+   if (displayOn){
+    delay(10000);
+    display.fillRect(0, 0, 128, 64, BLACK);
+    display.display();
+    displayOn = false;
+   }
+   delay(5000);
+   LowPower.sleep(period);
 }
 
 void collectReadings(){
   sensors_event_t event;  
   dht.temperature().getEvent(&event);
   if (isnan(event.temperature)) {
-    // Serial.print("Error w/ Temp.!");
+    temp = "n/a";
   }
   else {
-    // Serial.print("Temp.: ");
-    // Serial.print(event.temperature);
-    // Serial.print(" C");
     temp = String(event.temperature);
   }
-  // Get humidity event and print its value.
   dht.humidity().getEvent(&event);
 
   if (isnan(event.relative_humidity)) {
-    // Serial.print("Error w/ Humid.!");
+    humid =  "n/a";
   }
   else {
-    // Serial.print("Humid.: ");
-    // Serial.print(event.relative_humidity);
-    // Serial.println("%");
     humid = String(event.temperature);
   }
 }
 
-void setStatusMessage(String message, int statusCode){
+void setStatusMessage(String message, String statusCode){
   display.setTextSize(1);
   display.setTextColor(WHITE);
   display.setCursor(0,0);
@@ -114,7 +109,7 @@ void setStatusMessage(String message, int statusCode){
   display.println(message);
   String statusMessage;
   if (statusCode != NULL){
-    statusMessage = "Status code: " + String(statusCode);
+    statusMessage = "Status code: " + statusCode;
   } else {
     statusMessage = "Haven't sent data";
   }
@@ -122,7 +117,7 @@ void setStatusMessage(String message, int statusCode){
   display.display();
 }
 
-void showParameters(String temp, String humid, String desiredTemp){
+void showParameters(String temp, String humid){
   display.setTextSize(1);
   display.setTextColor(WHITE);
   display.setCursor(0,16);
@@ -130,73 +125,59 @@ void showParameters(String temp, String humid, String desiredTemp){
   display.println(temp);
   display.println("");
   display.println(humid);
-  display.println("");
-  display.print(desiredTemp);
-  display.display();
-}
-
-void setMainMessage(String message, int pixelH, int erase){
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(0,pixelH);
-  if (erase){
-    display.fillRect(0, 16, 128, 64, BLACK);
-  }
-  display.print(message);  
   display.display();
 }
 
 void displayReadings(){
   String tempMessage = "Temperature: " + temp + "C";  
   String humidMessage = "Humidity: " + humid + "%";
-  int setTemp = map(analogRead(2), 1024, 0, 15, 30);
-  String desiredTemp = "Set Temp.: " + String(setTemp) + "C";
-  showParameters(tempMessage, humidMessage, desiredTemp);
+  showParameters(tempMessage, humidMessage);
 }
 
-void checkForConnection(){
+void establishConnection(){
   if (WiFi.status() != WL_CONNECTED){
+    Serial.println("Establishing connection");
     int connectionAttempt = 1;
     String message = "Connecting to " + String(ssid) + "; Attempt " + String(connectionAttempt);
-    setStatusMessage(message,statusCode);
-    setMainMessage("The connection has dropped, restoring the connection", 16, true);
+    if (displayOn){
+      setStatusMessage(message,statusCode);
+    }
   
     while ( WiFi.status() != WL_CONNECTED) {
-      // Serial.print("Attempting to connect to Network named: ");
-      // Serial.println(ssid);                   // print the network name (SSID);
-
-      // Connect to WPA/WPA2 network:
       WiFi.begin(ssid, pass);
       connectionAttempt++;
-      message = "Connecting to " + String(ssid) + "; Attempt = " + String(connectionAttempt);
-      setStatusMessage(message, statusCode);
+      if (displayOn){
+        message = "Connecting to " + String(ssid) + "; Attempt = " + String(connectionAttempt);
+        setStatusMessage(message, statusCode);
+      }
+    }
+
+    if (displayOn){
+      setStatusMessage("Connected",statusCode);
+    }
+    
+  } else {
+    if (displayOn){
+      setStatusMessage("Connected",statusCode);
     }
   }
 }
 
 void sendReadings(){
-  if (millis() - timeStamp > period){
+    Serial.println("sending data");
     String dataJSON = "{\'temperature\':" + temp  + ",\'humidity\':" + humid + "}";
     String mac = "\"macAddress\":\""+myMacAddress+"\"";
     String sessionKey = "\"sessionKey\":\""+session+"\"";
     String data = "\"data\":\""+dataJSON+"\"";
     String postData = "{"+mac+","+sessionKey+","+data+"}";
-    // Serial.print(postData);
     client.post(postPath,contentType,postData);
   
-    statusCode = client.responseStatusCode();
+    statusCode = String(client.responseStatusCode());
     String response = client.responseBody();
-    // Serial.println("");
-    // Serial.print("Status code: ");
-    // Serial.println(statusCode);
-    // Serial.print("Response: ");
-    // Serial.println(response);
-    // Serial.println("");
-    // Serial.println("");
-    timeStamp = millis();
-  }
+    Serial.print("status code: ");
+   Serial.println(statusCode);
 }
 
-void updateConnectionStatus(){
-   setStatusMessage("Connected", statusCode);
+void turnOnDisplay(){
+  displayOn = true;
 }
