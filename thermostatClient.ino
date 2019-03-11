@@ -27,7 +27,7 @@ String postPath = "/data";
 String temp;
 String humid;
 int port = 443;
-int period = 30000; // every 30s
+int period = 60000; // every 1 min
 
 char ssid[] = SECRET_SSID;
 char pass[] = SECRET_PASS;
@@ -39,7 +39,7 @@ WiFiSSLClient wifi;
 HttpClient client = HttpClient(wifi, serverAddress, port);
 
 void setup() {
-     Serial.begin(9600);
+//     Serial.begin(9600);
   // Start Display and DHT sensor
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C); // Initialize display
   display.clearDisplay(); // Clear display before each start
@@ -73,13 +73,12 @@ void loop() {
    establishConnection();
    sendReadings();
    if (displayOn){
-    delay(10000);
+    delay(7000);
     display.fillRect(0, 0, 128, 64, BLACK);
     display.display();
     displayOn = false;
    }
-   delay(5000);
-   LowPower.sleep(period);
+   LowPower.deepSleep(period);
 }
 
 void collectReadings(){
@@ -136,7 +135,7 @@ void displayReadings(){
 
 void establishConnection(){
   if (WiFi.status() != WL_CONNECTED){
-    Serial.println("Establishing connection");
+    //Serial.println("Establishing connection");
     int connectionAttempt = 1;
     String message = "Connecting to " + String(ssid) + "; Attempt " + String(connectionAttempt);
     if (displayOn){
@@ -164,7 +163,7 @@ void establishConnection(){
 }
 
 void sendReadings(){
-    Serial.println("sending data");
+    //Serial.println("sending data");
     String dataJSON = "{\'temperature\':" + temp  + ",\'humidity\':" + humid + "}";
     String mac = "\"macAddress\":\""+myMacAddress+"\"";
     String sessionKey = "\"sessionKey\":\""+session+"\"";
@@ -174,8 +173,8 @@ void sendReadings(){
   
     statusCode = String(client.responseStatusCode());
     String response = client.responseBody();
-    Serial.print("status code: ");
-   Serial.println(statusCode);
+    //Serial.print("status code: ");
+   //Serial.println(statusCode);
 }
 
 void turnOnDisplay(){
